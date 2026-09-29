@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voluntários do Lanche — MVV</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--vinho:#7a1f2b;--bg:#f6f1f1;--bd:#e5dcdc;--mut:#7a6f70}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:#1b1416;padding:20px}
+.card{max-width:520px;margin:0 auto;background:#fff;border-radius:16px;box-shadow:0 2px 10px rgba(0,0,0,.07);overflow:hidden}
+.head{background:var(--vinho);color:#fff;padding:24px}
+.head h1{margin:0;font-size:22px;font-weight:800}
+.head p{margin:6px 0 0;opacity:.85;font-size:14px}
+form,.msg{padding:22px 24px 26px}
+label{display:block;font-size:13px;font-weight:600;margin:16px 0 6px}
+input[type=text],select{width:100%;padding:13px 14px;border:1px solid var(--bd);border-radius:10px;font:inherit;font-size:16px;background:#fff}
+input:focus,select:focus{outline:2px solid var(--vinho);border-color:transparent}
+.dias{display:grid;gap:8px}
+.dia{display:flex;align-items:center;gap:10px;padding:13px 14px;border:1px solid var(--bd);border-radius:10px;cursor:pointer;font-size:15px}
+.dia:has(input:checked){border-color:var(--vinho);background:#f8ecee}
+.dia input{width:20px;height:20px;accent-color:var(--vinho)}
+button{width:100%;margin-top:22px;padding:15px;border:0;border-radius:10px;background:var(--vinho);color:#fff;font:inherit;font-weight:700;font-size:16px;cursor:pointer}
+button:disabled{opacity:.6}
+.ms{position:relative}
+button.msbtn{width:100%;margin:0;padding:13px 14px;border:1px solid var(--bd);border-radius:10px;background:#fff;color:#1b1416;font:inherit;font-size:16px;font-weight:400;text-align:left;display:flex;justify-content:space-between;gap:10px}
+button.msbtn.vazio{color:#8a8082}
+button.msbtn::after{content:'▾';color:var(--mut)}
+.mslist{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:5;background:#fff;border:1px solid var(--bd);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px}
+.mslist[hidden]{display:none}
+.err{color:#b3261e;font-size:14px;margin-top:14px;min-height:18px}
+.ok{text-align:center}.ok .big{font-size:48px}
+.hint{color:var(--mut);font-size:12.5px;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head"><h1>Voluntários do Lanche</h1><p>Marque os dias em que você vai servir.</p></div>
+  <form id="f" hidden>
+    <div id="boxEvento"><label>Evento</label><select id="evento"></select></div>
+    <label>Nome completo</label>
+    <input type="text" id="nome" autocomplete="name" placeholder="Nome e sobrenome">
+    <label>Trabalha no Ministério Verbo da Vida?</label>
+    <select id="mvv"><option value="" selected disabled>Selecione</option><option>Sim</option><option>Não</option></select>
+    <label>Em qual/quais equipe irá servir no período da Conferência de Homens?</label>
+    <input type="text" id="equipe" placeholder="Sua resposta">
+    <label>Informe o nome do líder da equipe que irá servir:</label>
+    <input type="text" id="lider" placeholder="Sua resposta">
+    <label>Marque abaixo o/os dias que você irá servir:</label>
+    <div class="ms"><button type="button" class="msbtn vazio" id="msBtn">Selecione</button><div class="mslist" id="dias" hidden></div></div>
+    <div class="err" id="err"></div>
+    <button type="submit" id="btn">Enviar</button>
+  </form>
+  <div class="msg" id="status">Carregando…</div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+// COLE AQUI o mesmo firebaseConfig usado no sistema de lanches
+const firebaseConfig = {
+  apiKey: "AIzaSyC6_DDTRZmiQdDbn6ClOxel7bZCxYmlAI8",
+  authDomain: "equipe-de-trabalho-ae029.firebaseapp.com",
+  projectId: "equipe-de-trabalho-ae029",
+  storageBucket: "equipe-de-trabalho-ae029.firebasestorage.app",
+  messagingSenderId: "832841108199",
+  appId: "1:832841108199:web:df1c65102b94e0105f7042"
+};
+const configOk = firebaseConfig.apiKey && firebaseConfig.apiKey!=='COLE_AQUI';
+let db = null;
+if(configOk){ firebase.initializeApp(firebaseConfig); db = firebase.firestore(); }
+const $ = id => document.getElementById(id);
+const key = n => (n||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
+let pub = null;
+
+async function carregar(){
+  const s = await Promise.race([db.collection('lanches_config').doc('publico').get(), new Promise((_,r)=>setTimeout(()=>r({code:'timeout'}),10000))]);
+  pub = s.exists ? s.data() : null;
+  return pub;
+}
+function atualizaBtn(){
+  const t = [...$('dias').querySelectorAll('input:checked')].map(i=>i.parentNode.textContent);
+  $('msBtn').textContent = t.length ? t.join(', ') : 'Selecione';
+  $('msBtn').classList.toggle('vazio', !t.length);
+}
+function renderDias(){
+  const ev = pub.eventos.find(e=>e.id===$('evento').value);
+  $('dias').innerHTML = ''; $('dias').hidden = true;
+  (ev?.cultos||[]).forEach(c=>{
+    const l = document.createElement('label'); l.className='dia'; l.style.margin='0 0 4px'; l.style.fontWeight=400;
+    const i = document.createElement('input'); i.type='checkbox'; i.value=c.id; i.onchange = atualizaBtn;
+    l.append(i, document.createTextNode(c.label));
+    $('dias').appendChild(l);
+  });
+  atualizaBtn();
+}
+$('msBtn').onclick = e => { e.stopPropagation(); $('dias').hidden = !$('dias').hidden; };
+document.addEventListener('click', e => { if(!e.target.closest('.ms')) $('dias').hidden = true; });
+async function init(){
+  const msg = t => { $('status').textContent = t; };
+  if(!configOk) return msg('Falta colar o firebaseConfig no arquivo (procure por COLE_AQUI).');
+  try{ await carregar(); }catch(e){
+    console.error(e);
+    return msg(e.code==='permission-denied' ? 'Sem permissão no Firestore: libere a coleção lanches_config nas regras.' : 'Não foi possível conectar ao Firebase. Confira o firebaseConfig e a internet.');
+  }
+  if(!pub) return msg('Formulário ainda não configurado: abra o sistema de lanches uma vez para publicar os eventos.');
+  if(!pub.eventos || !pub.eventos.length) return msg('Nenhum evento cadastrado no sistema de lanches.');
+  const sel = $('evento');
+  pub.eventos.forEach(e=>{ const o=document.createElement('option'); o.value=e.id; o.textContent=e.nome; sel.appendChild(o); });
+  const param = new URLSearchParams(location.search).get('evento');
+  if(param && pub.eventos.some(e=>e.id===param)) sel.value = param;
+  $('boxEvento').hidden = pub.eventos.length < 2 || !!param;
+  sel.onchange = renderDias; renderDias();
+  $('status').hidden = true; $('f').hidden = false;
+}
+$('f').addEventListener('submit', async ev=>{
+  ev.preventDefault();
+  const err = m => { $('err').textContent = m; };
+  err('');
+  const nome = $('nome').value.trim().replace(/\s+/g,' ');
+  const eventoId = $('evento').value;
+  const cultoIds = [...$('dias').querySelectorAll('input:checked')].map(i=>i.value);
+  if(nome.split(' ').length < 2) return err('Digite seu nome e sobrenome.');
+  if(!$('mvv').value) return err('Informe se você trabalha no Ministério Verbo da Vida.');
+  if(!$('equipe').value.trim()) return err('Informe a equipe em que irá servir.');
+  if(!$('lider').value.trim()) return err('Informe o nome do líder da equipe.');
+  if(!cultoIds.length) return err('Marque pelo menos um dia.');
+  $('btn').disabled = true; $('btn').textContent = 'Enviando…';
+  try{
+    await carregar(); // lista atualizada de nomes
+    const k = key(nome), id = eventoId+'__'+k;
+    const ref = db.collection('lanches_inscricoes').doc(id);
+    if((pub.nomes?.[eventoId]||[]).includes(k) || (await ref.get()).exists){
+      err('Este nome já está cadastrado. Se precisar alterar os dias, fale com a coordenação.');
+    } else {
+      await ref.set({nome, nomeKey:k, equipe:$('equipe').value.trim(), lider:$('lider').value.trim(), trabalhaMvv:$('mvv').value, eventoId, cultoIds, criadoEm:firebase.firestore.FieldValue.serverTimestamp()});
+      $('f').hidden = true; $('status').hidden = false; $('status').className='msg ok';
+      $('status').innerHTML = '<div class="big">✅</div><h2>Inscrição confirmada!</h2><p>Obrigado por servir, '+nome.split(' ')[0].replace(/[<>&"]/g,'')+'.</p>';
+      return;
+    }
+  }catch(e){
+    console.error(e);
+    err(e.code==='permission-denied' ? 'Este nome já está cadastrado.' : 'Não foi possível enviar. Tente novamente.');
+  }
+  $('btn').disabled = false; $('btn').textContent = 'Enviar';
+});
+init();
+</script>
+</body>
+</html>
